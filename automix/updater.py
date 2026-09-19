@@ -8,7 +8,9 @@ import subprocess
 import sys
 import tempfile
 import urllib.request
+import urllib.error
 import zipfile
+import time
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
@@ -51,9 +53,7 @@ def check_for_update(root: Path, current_version: int, timeout: float = 10.0) ->
         raise RuntimeError(
             "Le moteur de mise à jour est installé, mais son adresse de publication n'est pas encore configurée."
         )
-    req = urllib.request.Request(url, headers={"User-Agent": "Ableton-AutoMix-Updater"})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        payload = json.loads(r.read().decode("utf-8"))
+    payload = json.loads(_download_bytes(url, timeout).decode("utf-8"))
 
     raw_files = payload.get("files", [])
     files = raw_files if isinstance(raw_files, list) else []
@@ -86,10 +86,28 @@ def _safe_rel_path(value: str) -> Path:
     return Path(*posix.parts)
 
 
-def _download_bytes(url: str, timeout: float) -> bytes:
-    req = urllib.request.Request(url, headers={"User-Agent": "Ableton-AutoMix-Updater"})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return r.read()
+def _download_bytes(url: str, timeout: float, attempts: int = 4) -> bytes:
+    last_exc: Exception | None = None
+    for attempt in range(1, max(1, attempts) + 1):
+        req = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": "Ableton-AutoMix-Updater/13",
+                "Accept": "*/*",
+                "Connection": "close",
+            },
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return r.read()
+        except Exception as exc:
+            last_exc = exc
+            if attempt >= attempts:
+                break
+            time.sleep(min(4.0, 0.75 * attempt))
+    raise RuntimeError(
+        f"Téléchargement interrompu après {attempts} tentative(s) : {last_exc}"
+    ) from last_exc
 
 
 def _build_file_update_zip(info: UpdateInfo, timeout: float) -> Path:
@@ -148,9 +166,26 @@ def download_update(info: UpdateInfo, timeout: float = 60.0) -> Path:
         raise RuntimeError("Le manifeste de mise à jour ne contient ni fichiers ni URL de ZIP.")
 
     target = Path(tempfile.gettempdir()) / f"Ableton_AutoMix_V{info.version}_update.zip"
-    req = urllib.request.Request(info.url, headers={"User-Agent": "Ableton-AutoMix-Updater"})
-    with urllib.request.urlopen(req, timeout=timeout) as r, target.open("wb") as f:
-        shutil.copyfileobj(r, f)
+    part = target.with_suffix(".zip.part")
+    target.unlink(missing_ok=True)
+    part.unlink(missing_ok=True)
+    last_exc: Exception | None = None
+    for attempt in range(1, 5):
+        try:
+            data = _download_bytes(info.url, timeout, attempts=1)
+            part.write_bytes(data)
+            part.replace(target)
+            last_exc = None
+            break
+        except Exception as exc:
+            last_exc = exc
+            part.unlink(missing_ok=True)
+            if attempt < 4:
+                time.sleep(min(4.0, 0.75 * attempt))
+    if last_exc is not None:
+        raise RuntimeError(
+            f"Impossible de télécharger la mise à jour après 4 tentatives : {last_exc}"
+        ) from last_exc
     if info.sha256:
         actual = _sha256(target)
         if actual.lower() != info.sha256.lower():
