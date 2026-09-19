@@ -1,6 +1,6 @@
 {
-  "version": 12,
-  "notes": "V12 : suppression complète du mode veille d’export. Si l’automatisation Ableton échoue, elle s’arrête immédiatement et AutoMix permet d’importer directement un dossier de stems exportés manuellement.",
+  "version": 13,
+  "notes": "V13 : chaque piste reste un stem séparé. Les Drum Racks sont détectés dans le .als et chaque chaîne active (kick, snare, cymbale, etc.) est rendue et mixée comme une cible indépendante. Le projet original n’est jamais modifié.",
   "files": [
     {
       "path": "automix_app.py",
