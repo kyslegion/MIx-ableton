@@ -1,0 +1,246 @@
+.… ').strip()
+        if not re.fullmatch(r'(cancel|annuler)', name, re.I):
+            continue
+        try:
+            if not c.is_visible():
+                continue
+            r = c.rectangle()
+            width = max(45, r.width())
+            # One button-width + a small gap to the left, same vertical centre.
+            sx = int(r.left - max(8, width * 0.18) - width / 2)
+            sy = int((r.top + r.bottom) / 2)
+            rel_x = (sx - dr.left) / max(1, dr.width())
+            rel_y = (sy - dr.top) / max(1, dr.height())
+            if 0.05 < rel_x < 0.95 and 0.75 < rel_y < 1.0:
+                if _dialog_click_rel(dialog, rel_x, rel_y):
+                    time.sleep(0.35)
+                    try:
+                        if not dialog.is_visible():
+                            return True
+                    except Exception:
+                        return True
+        except Exception:
+            continue
+    return False
+
+
+def _click_export(dialog, keyboard=None) -> bool:
+    """Press Live's Export/Exporter button using several independent routes.
+
+    V7 still relied too heavily on one calibrated point near (50%, 95.8%).
+    V8 first uses semantic UIA, then searches every accessible control type,
+    then infers the button from Annuler/Cancel, and only then falls back to
+    geometry + keyboard.
+    """
+    # 1) Normal UIA Button.  Do not trust a successful click call unless the
+    # export modal actually disappears.
+    if _click_button(dialog, (r"^export$", r"^exporter$")):
+        time.sleep(0.35)
+        try:
+            if not dialog.is_visible():
+                return True
+        except Exception:
+            return True
+
+    # 2) Live may expose the visible label as Text/Custom instead of Button.
+    if _click_named_export_control(dialog):
+        return True
+
+    # 3) If Cancel is accessible, infer Exporter's location immediately left.
+    if _click_export_left_of_cancel(dialog):
+        return True
+
+    # 4) Geometry fallbacks.  Keep them on the left/centre portion of the
+    # bottom row so we do not accidentally hit Cancel on layouts where it is
+    # the rightmost button.
+    for x, y in (
+        (0.50, 0.958),
+        (0.46, 0.958),
+        (0.42, 0.958),
+        (0.54, 0.958),
+        (0.50, 0.946),
+    ):
+        if _dialog_click_rel(dialog, x, y):
+            time.sleep(0.35)
+            try:
+                if not dialog.is_visible():
+                    return True
+            except Exception:
+                return True
+
+    # 5) Last-resort keyboard activation after focusing the most likely area.
+    if keyboard is not None:
+        for x in (0.50, 0.46, 0.42):
+            try:
+                _dialog_click_rel(dialog, x, 0.958)
+                keyboard.send_keys('{ENTER}', pause=0.05)
+                time.sleep(0.35)
+                try:
+                    if not dialog.is_visible():
+                        return True
+                except Exception:
+                    return True
+            except Exception:
+                pass
+    return False
+
+def _set_checkbox(dialog, keywords: tuple[str, ...], desired: bool) -> bool:
+    try:
+        checks = dialog.descendants(control_type="CheckBox")
+    except Exception:
+        return False
+    for cb in checks:
+        text = _window_text(cb).lower()
+        if not any(k in text for k in keywords):
+            continue
+        try:
+            state = cb.get_toggle_state()
+            checked = bool(state)
+        except Exception:
+            checked = None
+        if checked is None or checked != desired:
+            try:
+                cb.click_input()
+            except Exception:
+                try:
+                    cb.toggle()
+                except Exception:
+                    continue
+        return True
+    return False
+
+
+def _click_button(dialog, patterns: tuple[str, ...]) -> bool:
+    try:
+        buttons = dialog.descendants(control_type="Button")
+    except Exception:
+        buttons = []
+    for b in buttons:
+        text = _window_text(b).strip().lower()
+        if any(re.fullmatch(p, text, re.I) or re.search(p, text, re.I) for p in patterns):
+            try:
+                if b.is_enabled():
+                    b.click_input()
+                    return True
+            except Exception:
+                pass
+    return False
+
+
+def _find_save_dialog(process_id: int | None, timeout: float = 30.0):
+    """Find the Windows Save As dialog opened by Live.
+
+    Prefer Live's process, but allow the common-file-dialog host as a fallback
+    because some Windows 11 configurations expose it under a different PID.
+    """
+    end = time.time() + timeout
+    title_re = re.compile(r"(save|enregistrer|choose|choisir|export)", re.I)
+    while time.time() < end:
+        candidates = []
+        for w in _all_top_windows():
+            try:
+                if not w.is_visible():
+                    continue
+                same_pid = process_id is None or w.process_id() == process_id
+            except Exception:
+                continue
+            title = _window_text(w)
+            if not title_re.search(title):
+                continue
+            try:
+                edits = [e for e in w.descendants(control_type="Edit") if e.is_visible()]
+                buttons = [(_window_text(x) or '').lower() for x in w.descendants(control_type="Button")]
+                has_save = any(("save" in x or "enregistrer" in x) for x in buttons)
+                if edits and has_save:
+                    candidates.append((0 if same_pid else 1, w))
+            except Exception:
+                pass
+        if candidates:
+            candidates.sort(key=lambda x: x[0])
+            return candidates[0][1]
+        time.sleep(0.35)
+    return None
+
+def _set_save_target(dialog, output_folder: Path, base_name: str, log=None) -> None:
+    """Force the Save dialog into AutoMix's project folder and save.
+
+    V8 navigates the dialog to the folder first (Ctrl+L), then enters only the
+    base filename.  This is more deterministic than relying on Live's last
+    export directory or hoping an absolute path in the filename box is parsed.
+    """
+    _, keyboard = _imports()
+    output_folder = Path(output_folder).resolve()
+    output_folder.mkdir(parents=True, exist_ok=True)
+    _emit(log, f"Fenêtre Enregistrer détectée. Destination forcée : {output_folder}")
+
+    try:
+        dialog.set_focus()
+    except Exception:
+        pass
+
+    # Navigate the common Windows dialog to the exact AutoMix folder.
+    navigated = False
+    try:
+        keyboard.send_keys('^l', pause=0.05)
+        time.sleep(0.15)
+        keyboard.send_keys('^a', pause=0.03)
+        keyboard.send_keys(str(output_folder), with_spaces=True, pause=0.01)
+        keyboard.send_keys('{ENTER}', pause=0.05)
+        time.sleep(0.8)
+        navigated = True
+    except Exception:
+        pass
+
+    edits = []
+    try:
+        edits = [e for e in dialog.descendants(control_type="Edit") if e.is_visible() and e.is_enabled()]
+    except Exception:
+        pass
+    if not edits:
+        raise AbletonAutomationError("Impossible de trouver le champ de nom de fichier dans la fenêtre Enregistrer.")
+
+    # Prefer a semantically named filename box. Otherwise use the bottom-most
+    # visible edit, which is the filename field in the Windows Save dialog.
+    chosen = None
+    for e in edits:
+        label = (_window_text(e) + " " + str(getattr(e.element_info, "name", ""))).lower()
+        if any(k in label for k in ("file name", "nom du fichier", "filename", "nom de fichier")):
+            chosen = e
+            break
+    if chosen is None:
+        def edit_key(e):
+            try:
+                r = e.rectangle()
+                return (r.top, r.left)
+            except Exception:
+                return (-1, -1)
+        chosen = sorted(edits, key=edit_key)[-1]
+
+    # If navigation worked, enter just a safe basename. Otherwise fall back to
+    # an absolute target path so the destination still cannot drift elsewhere.
+    value = base_name if navigated else str(output_folder / base_name)
+    try:
+        chosen.set_focus()
+    except Exception:
+        pass
+    try:
+        chosen.set_edit_text(value)
+    except Exception:
+        try:
+            chosen.click_input()
+            keyboard.send_keys('^a', pause=0.03)
+            keyboard.send_keys(value, with_spaces=True, pause=0.01)
+        except Exception as exc:
+            raise AbletonAutomationError("Je n'arrive pas à saisir le nom d'export dans la fenêtre Enregistrer.") from exc
+
+    # Prefer the real Save button; Enter is a robust fallback in common dialogs.
+    if not _click_button(dialog, (r"^save$", r"^enregistrer$", r"enregistrer", r"save")):
+        try:
+            chosen.set_focus()
+            keyboard.send_keys('{ENTER}', pause=0.05)
+        except Exception as exc:
+            raise AbletonAutomationError("Je n'arrive pas à valider Enregistrer dans la fenêtre de sauvegarde.") from exc
+    time.sleep(0.6)
+
+def _audio_signature(folder: Path):
+    row
