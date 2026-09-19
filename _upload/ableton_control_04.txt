@@ -1,0 +1,17 @@
+l'étape et clique sur Exporter manuellement si nécessaire. "
+            "Une capture ableton_export_failed.png a été enregistrée dans le dossier des stems."
+        )
+
+    _emit(log, "Fenêtre Enregistrer détectée : je reprends automatiquement la main.")
+    _set_save_target(save, output_folder, "AUTOMIX_STEMS", log=log)
+    _emit(log, "Rendu lancé par Ableton. J'attends la fin sans te demander d'intervenir…")
+
+    files = wait_for_render(
+        output_folder,
+        min_files=max(1, expected_min_files),
+        timeout=render_timeout,
+        log=log,
+    )
+    elapsed = time.time() - started
+    _emit(log, f"Rendu terminé : {len(files)} fichier(s) en {elapsed:.0f} s.")
+    return ExportResult(str(output_folder), [str(p) for p in files], elapsed, diagnostic)
