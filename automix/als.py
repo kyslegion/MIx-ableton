@@ -364,8 +364,7 @@ def make_drum_branch_render_copy(
         if track.attrib.get("Id", "") != str(target.parent_track_id):
             continue
         for drum in _direct_drum_devices(track):
-            if drum.attrib.get("Id", "") != str(target.drum_device_id):
-                continue
+            did = drum.attrib.get("Id", "")
             branches = drum.find("./Branches")
             if branches is None:
                 continue
@@ -375,7 +374,12 @@ def make_drum_branch_render_copy(
                 speaker = branch.find("./MixerDevice/Speaker/Manual")
                 if speaker is None:
                     continue
-                is_target = branch.attrib.get("Id", "") == str(target.drum_branch_id)
+                is_target = (
+                    did == str(target.drum_device_id)
+                    and branch.attrib.get("Id", "") == str(target.drum_branch_id)
+                )
+                # Silence every Drum Rack chain on this parent track except
+                # the requested one, including chains from a second Drum Rack.
                 speaker.attrib["Value"] = "true" if is_target else "false"
                 if is_target:
                     matched = True
