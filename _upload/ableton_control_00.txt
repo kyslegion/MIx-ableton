@@ -1,0 +1,287 @@
+from __future__ import annotations
+
+import os
+import platform
+import re
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Callable
+
+AUDIO_EXTS = {".wav", ".wave", ".aif", ".aiff", ".flac"}
+
+
+class AbletonAutomationError(RuntimeError):
+    pass
+
+
+@dataclass
+class ExportResult:
+    folder: str
+    files: list[str]
+    elapsed_s: float
+    diagnostic: str | None = None
+
+
+def _emit(log: Callable[[str], None] | None, msg: str) -> None:
+    if log:
+        log(msg)
+
+
+def _require_windows():
+    if platform.system().lower() != "windows":
+        raise AbletonAutomationError("L'automatisation d'Ableton de cette V11 est prévue pour Windows.")
+
+
+def _imports():
+    try:
+        from pywinauto import Desktop, keyboard  # type: ignore
+    except Exception as exc:
+        raise AbletonAutomationError(
+            "pywinauto n'est pas installé. Lance install.bat puis réessaie."
+        ) from exc
+    return Desktop, keyboard
+
+
+def _all_top_windows(backend: str = "uia"):
+    Desktop, _ = _imports()
+    return Desktop(backend=backend).windows()
+
+
+def _window_text(w) -> str:
+    try:
+        return w.window_text() or ""
+    except Exception:
+        return ""
+
+
+def _looks_like_live_window(w) -> bool:
+    title = _window_text(w).lower()
+    if "ableton live" in title:
+        return True
+    try:
+        proc = w.process_id()
+        import psutil  # type: ignore
+        name = psutil.Process(proc).name().lower()
+        return "ableton live" in name
+    except Exception:
+        return False
+
+
+def find_live_window(project_stem: str | None = None):
+    wins = [w for w in _all_top_windows() if _looks_like_live_window(w)]
+    if not wins:
+        return None
+    if project_stem:
+        needle = project_stem.lower()
+        preferred = [w for w in wins if needle in _window_text(w).lower()]
+        if preferred:
+            return preferred[0]
+    # Prefer a normal, visible, sizeable main window.
+    for w in wins:
+        try:
+            if w.is_visible() and w.rectangle().width() > 700:
+                return w
+        except Exception:
+            pass
+    return wins[0]
+
+
+def _wait_for_live(project_stem: str, timeout: float, log=None):
+    end = time.time() + timeout
+    last_notice = 0.0
+    while time.time() < end:
+        w = find_live_window(project_stem)
+        if w is not None:
+            return w
+        if time.time() - last_notice > 8:
+            _emit(log, "J'attends qu'Ableton Live ouvre le projet…")
+            last_notice = time.time()
+        time.sleep(1.0)
+    raise AbletonAutomationError(
+        "Ableton Live ne s'est pas ouvert à temps. Ouvre le projet dans Live puis relance l'étape."
+    )
+
+
+def launch_or_focus_project(project_path: str | Path, *, timeout: float = 180.0, log=None):
+    _require_windows()
+    project_path = Path(project_path).resolve()
+    if not project_path.exists():
+        raise AbletonAutomationError(f"Projet introuvable : {project_path}")
+
+    w = find_live_window(project_path.stem)
+    if w is None:
+        _emit(log, f"Ouverture de {project_path.name} dans Ableton Live…")
+        try:
+            os.startfile(str(project_path))  # type: ignore[attr-defined]
+        except Exception as exc:
+            raise AbletonAutomationError(
+                "Windows n'arrive pas à ouvrir le .als. Vérifie que .als est associé à Ableton Live."
+            ) from exc
+        w = _wait_for_live(project_path.stem, timeout, log=log)
+    else:
+        _emit(log, "Le bon projet Ableton est déjà ouvert.")
+
+    try:
+        w.restore()
+    except Exception:
+        pass
+    try:
+        w.set_focus()
+    except Exception:
+        try:
+            w.click_input()
+        except Exception:
+            pass
+    time.sleep(1.0)
+    return w
+
+
+def _find_export_dialog(process_id: int, timeout: float = 30.0):
+    """Find Live's *actual* Export Audio/Video modal.
+
+    Important: never treat the main Live window as the export dialog merely
+    because the project filename contains words such as ``render``.  AutoMix
+    intentionally creates files named render_source_pass_XX.als, so V4 could
+    mistake the main window for the modal and then click the File menu.
+    """
+    end = time.time() + timeout
+    # Deliberately DO NOT include the generic word "render" here.
+    title_re = re.compile(
+        r"(exporter\s+audio(?:/|\s*)vid[eé]o|export\s+audio(?:/|\s*)video|"
+        r"export\s+audio|audio(?:/|\s*)vid[eé]o|conversion\s+audio)",
+        re.I,
+    )
+    while time.time() < end:
+        for w in _all_top_windows():
+            try:
+                if w.process_id() != process_id or not w.is_visible():
+                    continue
+            except Exception:
+                continue
+
+            title = _window_text(w).strip()
+            low_title = title.lower()
+
+            # The normal project window always contains "Ableton Live" in its
+            # title.  A filename like render_source_pass_00 must not make it a
+            # candidate for the export modal.
+            looks_like_main = "ableton live" in low_title
+            if title_re.search(title) and not looks_like_main:
+                return w
+
+            # Fallback for themes/builds where the modal title is not exposed:
+            # require a compact top-level window with an actual Export/Exporter
+            # *button* plus another export-dialog signature.  Menu items in the
+            # main Live window are not Buttons, so they won't trigger this.
+            try:
+                r = w.rectangle()
+                buttons = [(_window_text(b) or "").strip() for b in w.descendants(control_type="Button")]
+                has_export_button = any(re.fullmatch(r"export(?:er)?", b, re.I) for b in buttons)
+                combo_count = len(w.descendants(control_type="ComboBox"))
+                compact = r.width() < 760
+                if not looks_like_main and compact and has_export_button and combo_count >= 1:
+                    return w
+            except Exception:
+                pass
+        time.sleep(0.35)
+    return None
+
+
+def _dump_dialog(dialog) -> str:
+    lines = [f"TITLE: {_window_text(dialog)!r}"]
+    try:
+        for c in dialog.descendants():
+            try:
+                lines.append(
+                    f"{getattr(c.element_info, 'control_type', '?'):12} | {c.window_text()!r} | auto_id={getattr(c.element_info, 'automation_id', '')!r}"
+                )
+            except Exception:
+                pass
+            if len(lines) > 250:
+                break
+    except Exception as exc:
+        lines.append(f"dump error: {exc}")
+    return "\n".join(lines)
+
+
+def _combo_items(combo) -> list[str]:
+    out: list[str] = []
+    try:
+        combo.expand()
+        time.sleep(0.2)
+    except Exception:
+        pass
+    try:
+        for item in combo.descendants(control_type="ListItem"):
+            t = item.window_text().strip()
+            if t:
+                out.append(t)
+    except Exception:
+        pass
+    if not out:
+        try:
+            out = [x for x in combo.item_texts() if x]
+        except Exception:
+            pass
+    try:
+        combo.collapse()
+    except Exception:
+        pass
+    return out
+
+
+def _sorted_controls(dialog, control_type: str):
+    """Return visible controls sorted top-to-bottom / left-to-right.
+
+    Ableton uses some custom UI controls whose popup entries are not always
+    exposed through UI Automation.  Sorting by rectangle gives us a stable
+    way to identify the topmost combo (Rendered Track) without depending on
+    localized labels.
+    """
+    try:
+        controls = [c for c in dialog.descendants(control_type=control_type) if c.is_visible()]
+    except Exception:
+        return []
+
+    def key(c):
+        try:
+            r = c.rectangle()
+            return (r.top, r.left)
+        except Exception:
+            return (10**9, 10**9)
+
+    return sorted(controls, key=key)
+
+
+def _select_combo_second_item_with_keyboard(combo, keyboard) -> bool:
+    """Select item #2 in a combo without reading its popup text.
+
+    In Live 12's Rendered Track menu the first entry is Master/Main and the
+    second entry is All Individual Tracks.  This keyboard route works even
+    when Ableton's custom popup does not publish ListItem children to UIA.
+    """
+    try:
+        combo.set_focus()
+    except Exception:
+        try:
+            combo.click_input()
+        except Exception:
+            return False
+    time.sleep(0.15)
+
+    # HOME gives us a deterministic starting point regardless of the value
+    # remembered by Live from a previous export.
+    try:
+        keyboard.send_keys('{HOME}{DOWN}{ENTER}', pause=0.08)
+        time.sleep(0.25)
+        return True
+    except Exception:
+        return False
+
+
+def _select_rendered_track_by_geometry(dialog, keyboard) -> bool:
+    """Last-resort click on Live's Rendered Track dropdown by dialog geometry.
+
+    The Export Audio/Video window is a fixed layout.  We use proportions of
+    the dialog rectangle rather than absolute screen coo
