@@ -1,5 +1,74 @@
 {
   "version": 11,
-  "notes": "V11 : canal de mise à jour GitHub activé. À partir de cette version, AutoMix peut récupérer les prochaines mises à jour directement depuis le dépôt.",
-  "files": []
+  "notes": "V11 : dépôt GitHub complet, canal de mise à jour activé et mode veille de l’étape 1.",
+  "files": [
+    {
+      "path": "automix_app.py",
+      "url": "https://raw.githubusercontent.com/kyslegion/MIx-ableton/main/automix_app.py"
+    },
+    {
+      "path": "README.txt",
+      "url": "https://raw.githubusercontent.com/kyslegion/MIx-ableton/main/README.txt"
+    },
+    {
+      "path": "requirements.txt",
+      "url": "https://raw.githubusercontent.com/kyslegion/MIx-ableton/main/requirements.txt"
+    },
+    {
+      "path": "install.bat",
+      "url": "https://raw.githubusercontent.com/kyslegion/MIx-ableton/main/install.bat"
+    },
+    {
+      "path": "RUN_AUTOMIX.bat",
+      "url": "https://raw.githubusercontent.com/kyslegion/MIx-ableton/main/RUN_AUTOMIX.bat"
+    },
+    {
+      "path": "update_worker.py",
+      "url": "https://raw.githubusercontent.com/kyslegion/MIx-ableton/main/update_worker.py"
+    },
+    {
+      "path": "automix/__init__.py",
+      "url": "https://raw.githubusercontent.com/kyslegion/MIx-ableton/main/automix/__init__.py"
+    },
+    {
+      "path": "automix/als.py",
+      "url": "https://raw.githubusercontent.com/kyslegion/MIx-ableton/main/automix/als.py"
+    },
+    {
+      "path": "automix/mix_engine.py",
+      "url": "https://raw.githubusercontent.com/kyslegion/MIx-ableton/main/automix/mix_engine.py"
+    },
+    {
+      "path": "automix/self_repair.py",
+      "url": "https://raw.githubusercontent.com/kyslegion/MIx-ableton/main/automix/self_repair.py"
+    },
+    {
+      "path": "automix/updater.py",
+      "url": "https://raw.githubusercontent.com/kyslegion/MIx-ableton/main/automix/updater.py"
+    },
+    {
+      "path": "automix/quality.py",
+      "url": "https://raw.githubusercontent.com/kyslegion/MIx-ableton/main/automix/quality.py"
+    },
+    {
+      "path": "automix/ableton_control.py",
+      "url": "https://raw.githubusercontent.com/kyslegion/MIx-ableton/main/automix/ableton_control.py"
+    },
+    {
+      "path": "automix/codex_adapter.py",
+      "url": "https://raw.githubusercontent.com/kyslegion/MIx-ableton/main/automix/codex_adapter.py"
+    },
+    {
+      "path": "automix/audio.py",
+      "url": "https://raw.githubusercontent.com/kyslegion/MIx-ableton/main/automix/audio.py"
+    },
+    {
+      "path": "update_config.json",
+      "url": "https://raw.githubusercontent.com/kyslegion/MIx-ableton/main/update_config.json"
+    },
+    {
+      "path": "CODEX_LOGIN.bat",
+      "url": "https://raw.githubusercontent.com/kyslegion/MIx-ableton/main/CODEX_LOGIN.bat"
+    }
+  ]
 }
