@@ -1,0 +1,38 @@
+name: Import AutoMix project
+
+on:
+  push:
+    paths:
+      - "payload/complete"
+
+permissions:
+  contents: write
+
+jobs:
+  import-project:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Reassemble and unpack AutoMix
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat payload/part-*.txt | tr -d '\r\n' | base64 --decode > /tmp/automix_project.zip
+          unzip -oq /tmp/automix_project.zip -d .
+          rm -rf payload
+
+      - name: Commit imported project
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Nothing to commit"
+            exit 0
+          fi
+          git commit -m "Import Ableton AutoMix V11 project [skip ci]"
+          git push
