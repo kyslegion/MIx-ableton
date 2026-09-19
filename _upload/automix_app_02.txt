@@ -1,0 +1,176 @@
+e rende, le réécoute par mesures et prépare la suite."))
+        except Exception as exc:
+            self._handle_worker_error("Création du mix", exc)
+        finally:
+            self.after(0, lambda: self._set_busy(False))
+
+    def step3(self):
+        if self.busy: return
+        if not self.current_mix_path or not self.workspace:
+            messagebox.showwarning("Étape 3", "Crée d'abord le mix automatique avec l'étape 2.")
+            return
+        self._set_busy(True, f"Contrôle de la passe {self.pass_index:02d}…")
+        threading.Thread(target=self._step3_worker, daemon=True).start()
+
+    def _step3_worker(self):
+        try:
+            current_pass = self.pass_index
+            render_set = self.workspace / f"render_source_pass_{current_pass:02d}.als"
+            render_set, _ = make_render_source_copy(self.current_mix_path, render_set, tail_beats=4.0)
+            stems = self.workspace / f"pass_{current_pass:02d}_stems"
+            export_individual_tracks(
+                render_set, stems,
+                expected_min_files=max(1, len(self.project.tracks) if self.project else 1),
+                log=self._log,
+            )
+            new_metrics = scan_folder(stems)
+            old_q = evaluate_balance(self.project, self.metrics) if self.metrics else None
+            self.previous_metrics = self.metrics
+            self.metrics = new_metrics
+            new_q = evaluate_balance(self.project, new_metrics)
+            self.after(0, lambda: self._set_metrics(new_metrics))
+            if old_q:
+                self._log(f"Comparaison : {old_q.score}/100 → {new_q.score}/100.")
+
+            if new_q.stable:
+                self._log("La balance mesurée est devenue stable. Je garde cette passe comme résultat courant.")
+                self.after(0, lambda: self.status.configure(text=f"Mix stable à la passe {current_pass:02d}. Tu peux ouvrir le meilleur .als."))
+                return
+
+            acts, source = self._choose_actions()
+            self.after(0, lambda a=acts, s=source: self._set_actions(a, s))
+            meaningful = [a for a in acts if abs(float(a.get("gain_db_delta", 0))) >= 0.25 or a.get("pan") is not None]
+            if not meaningful:
+                self._log("Aucune correction supplémentaire significative. Je conserve cette passe.")
+                self.after(0, lambda: self.status.configure(text=f"Mix terminé à la passe {current_pass:02d}."))
+                return
+
+            next_pass = current_pass + 1
+            out = self.workspace / f"AUTOMIX_PASS_{next_pass:02d}.als"
+            apply_mix_copy(self.current_mix_path, out, acts)
+            self.current_mix_path = out
+            self.pass_index = next_pass
+            self.project = parse_als(out)
+            self.after(0, lambda: self._refresh_tracks(self.project))
+            self._log(f"Passe suivante préparée automatiquement : {out.name}")
+            self.after(0, lambda: self.status.configure(text=f"Passe {next_pass:02d} prête. Reclique sur 3 pour la rendre et la contrôler."))
+        except Exception as exc:
+            self._handle_worker_error("Contrôle du mix", exc)
+        finally:
+            self.after(0, lambda: self._set_busy(False))
+
+    def _handle_worker_error(self, title: str, exc: Exception):
+        self._log(f"ERREUR : {exc}")
+        msg = str(exc)
+        if isinstance(exc, AbletonAutomationError) and self.workspace:
+            msg += f"\n\nLe diagnostic Ableton est conservé dans le dossier de travail :\n{self.workspace}"
+        self.last_error_text = f"{title}\n{msg}"
+        self.after(0, lambda t=title, m=msg: self._prepare_feedback_from_error(t, m))
+        self.after(0, lambda: self.status.configure(text="Étape interrompue — l'erreur a été envoyée dans Correction / aide."))
+
+    def _feedback_attach_dir(self) -> Path:
+        base = self.workspace if self.workspace else (ROOT / ".feedback")
+        out = Path(base) / "feedback_attachments"
+        out.mkdir(parents=True, exist_ok=True)
+        return out
+
+    def _add_feedback_image(self, src: Path, *, copy_file: bool = True) -> Path | None:
+        try:
+            src = Path(src)
+            if not src.exists():
+                return None
+            if copy_file:
+                stamp = time.strftime("%Y%m%d-%H%M%S")
+                dst = self._feedback_attach_dir() / f"capture_{stamp}_{len(self.feedback_images)+1:02d}{src.suffix.lower() or '.png'}"
+                shutil.copy2(src, dst)
+            else:
+                dst = src
+            if dst not in self.feedback_images:
+                self.feedback_images.append(dst)
+                self.feedback_list.insert("end", dst.name)
+            return dst
+        except Exception as exc:
+            messagebox.showerror("Capture", str(exc))
+            return None
+
+    def choose_feedback_images(self):
+        files = filedialog.askopenfilenames(filetypes=[("Images", "*.png *.jpg *.jpeg *.webp *.bmp"), ("Tous les fichiers", "*.*")])
+        for f in files:
+            self._add_feedback_image(Path(f), copy_file=True)
+
+    def paste_feedback_image(self):
+        try:
+            from PIL import Image, ImageGrab
+            data = ImageGrab.grabclipboard()
+            if isinstance(data, Image.Image):
+                stamp = time.strftime("%Y%m%d-%H%M%S")
+                dst = self._feedback_attach_dir() / f"clipboard_{stamp}.png"
+                data.save(dst)
+                self._add_feedback_image(dst, copy_file=False)
+                self.repair_status.configure(text=f"Capture collée : {dst.name}")
+                return
+            if isinstance(data, list):
+                added = 0
+                for raw in data:
+                    p = Path(raw)
+                    if p.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".bmp"}:
+                        if self._add_feedback_image(p, copy_file=True):
+                            added += 1
+                if added:
+                    self.repair_status.configure(text=f"{added} image(s) ajoutée(s) depuis le presse-papiers.")
+                    return
+            messagebox.showinfo("Coller capture", "Le presse-papiers ne contient pas d'image. Copie une capture puis reclique ici.")
+        except Exception as exc:
+            messagebox.showerror("Coller capture", f"Impossible de lire l'image du presse-papiers : {exc}")
+
+    def capture_ableton_feedback(self, silent: bool = False):
+        try:
+            w = find_live_window(self.source_path.stem if self.source_path else None)
+            if w is None:
+                raise RuntimeError("Je ne trouve pas de fenêtre Ableton Live ouverte.")
+            img = w.capture_as_image()
+            stamp = time.strftime("%Y%m%d-%H%M%S")
+            dst = self._feedback_attach_dir() / f"ableton_{stamp}.png"
+            img.save(dst)
+            self._add_feedback_image(dst, copy_file=False)
+            self.repair_status.configure(text=f"Capture Ableton ajoutée : {dst.name}")
+            return dst
+        except Exception as exc:
+            if not silent:
+                messagebox.showerror("Capturer Ableton", str(exc))
+            return None
+
+    def remove_feedback_image(self):
+        sel = list(self.feedback_list.curselection())
+        for idx in reversed(sel):
+            try:
+                self.feedback_images.pop(idx)
+            except Exception:
+                pass
+            self.feedback_list.delete(idx)
+
+    def _prepare_feedback_from_error(self, title: str, msg: str):
+        try:
+            current = self.feedback_text.get("1.0", "end").strip()
+            prefix = "Décris ici ce qui ne marche pas, ou laisse simplement la capture parler."
+            if current == prefix:
+                self.feedback_text.delete("1.0", "end")
+            self.feedback_text.insert("end", f"\n[{time.strftime('%H:%M:%S')}] ERREUR — {title}\n{msg}\n")
+            self.feedback_text.see("end")
+            self.notebook.select(self.tab_feedback)
+            # Capture the current Live state automatically; the user can add more images.
+            self.capture_ableton_feedback(silent=True)
+            messagebox.showerror(title, msg + "\n\nL'erreur et une capture d'Ableton ont été ajoutées à l'onglet Correction / aide. Clique sur AUTO-CORRIGER si tu veux que Codex adapte le logiciel directement.")
+        except Exception:
+            messagebox.showerror(title, msg)
+
+    def start_self_repair(self):
+        if self.busy:
+            messagebox.showwarning("Auto-correction", "Attends la fin de l'étape en cours avant de réparer le logiciel.")
+            return
+        if not codex_available():
+            messagebox.showwarning("Auto-correction", "Codex CLI n'est pas détecté. Lance CODEX_LOGIN.bat puis relance AutoMix.")
+            return
+        feedback = self.feedback_text.get("1.0", "end").strip()
+        if not feedback and not self.feedback_images and not self.last_error_text:
+            messagebox.showwarning("Auto-correction", "Écris le problème ou ajoute une capture avant de lancer la corr
