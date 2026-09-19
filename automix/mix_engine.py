@@ -40,6 +40,8 @@ def match_stems(project: ProjectInfo, metrics: Iterable[AudioMetrics]) -> dict[s
     used: set[int] = set()
     out: dict[str, AudioMetrics] = {}
     for track in project.tracks:
+        if not getattr(track, "mixable", True):
+            continue
         scored = [(i, _similarity(track.name, m.file)) for i, m in enumerate(metrics) if i not in used]
         if not scored:
             continue
@@ -54,7 +56,10 @@ def _role(name: str) -> str:
     n = normalize_name(name)
     if any(x in n for x in ["vocal", "voco", "voice", "voix", "chant"]):
         return "vocal"
-    if any(x in n for x in ["kick", "snare", "drum", "perc", "batterie"]):
+    if any(x in n for x in [
+        "kick", "snare", "drum", "perc", "batterie", "cymbal", "cymbale",
+        "hihat", "hi hat", "hat", "clap", "tom", "shaker", "ride", "crash",
+    ]):
         return "drums"
     if any(x in n for x in ["bass", "basse", "sub"]):
         return "bass"
@@ -89,7 +94,8 @@ def propose_local_mix(project: ProjectInfo, metrics: Iterable[AudioMetrics]) -> 
 
     roles: dict[str, list] = {}
     for t in project.tracks:
-        roles.setdefault(_role(t.name), []).append(t)
+        if getattr(t, "mixable", True):
+            roles.setdefault(_role(t.name), []).append(t)
 
     actions: list[MixAction] = []
     for track in project.tracks:
