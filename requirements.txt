@@ -1,0 +1,9 @@
+numpy>=1.26
+soundfile>=0.12
+scipy>=1.12
+pyloudnorm>=0.1.1
+pywinauto>=0.6.9
+pywin32>=306
+psutil>=5.9
+
+Pillow>=10.0
