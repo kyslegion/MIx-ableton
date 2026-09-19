@@ -1,6 +1,6 @@
 {
-  "version": 11,
-  "notes": "V11 : dépôt GitHub complet, canal de mise à jour activé et mode veille de l’étape 1.",
+  "version": 12,
+  "notes": "V12 : suppression complète du mode veille d’export. Si l’automatisation Ableton échoue, elle s’arrête immédiatement et AutoMix permet d’importer directement un dossier de stems exportés manuellement.",
   "files": [
     {
       "path": "automix_app.py",
