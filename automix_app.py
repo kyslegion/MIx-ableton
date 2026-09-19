@@ -30,13 +30,13 @@ ROOT = Path(__file__).resolve().parent
 DEFAULT_ALS = ROOT / "sample_project" / "24-chorus chateau.als"
 WORKSPACES = ROOT / "AutoMix_Projects"
 WORKSPACES.mkdir(exist_ok=True)
-APP_VERSION = 13
+APP_VERSION = 14
 
 
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Ableton AutoMix V13 — stems séparés + Drum Rack + mix")
+        self.title("Ableton AutoMix V14 — pilotage souris Live + stems séparés")
         self.geometry("1180x760")
         self.minsize(980, 650)
 
@@ -201,7 +201,7 @@ class App(tk.Tk):
 
         self.log = tk.Text(self, height=9, wrap="word")
         self.log.pack(fill="x", padx=10, pady=(0, 10))
-        self._log("V13 prête. Chaque piste est rendue séparément ; les chaînes de Drum Rack (kick, snare, cymbale, etc.) sont également rendues une par une. L’original .als ne sera jamais modifié.")
+        self._log("V14 prête. La fenêtre Export Audio/Vidéo est maintenant pilotée avec de vrais clics souris, comme dans ta vidéo. Chaque piste et chaque sous-instrument de Drum Rack restent rendus séparément.")
 
     def _log(self, msg: str):
         def write():
@@ -729,8 +729,8 @@ class App(tk.Tk):
         try:
             info = check_for_update(ROOT, APP_VERSION)
             if info is None:
-                self._log("AutoMix V13 est déjà à jour.")
-                self.after(0, lambda: messagebox.showinfo("Mises à jour", "AutoMix V13 est déjà à jour."))
+                self._log("AutoMix V14 est déjà à jour.")
+                self.after(0, lambda: messagebox.showinfo("Mises à jour", "AutoMix V14 est déjà à jour."))
                 return
             note = f"\n\n{info.notes}" if info.notes else ""
             def ask():
