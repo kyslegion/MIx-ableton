@@ -145,3 +145,12 @@ V7 - EXPORT 100 % AUTOMATIQUE
 - L'automatisation échoue rapidement au lieu d'attendre 30 minutes.
 - Nouveau bouton « IMPORTER DES STEMS DÉJÀ EXPORTÉS ».
 - Tu peux exporter toi-même les stems dans Ableton, choisir ensuite leur dossier dans AutoMix, puis reprendre directement l'analyse et l'étape 2.
+
+
+=== NOUVEAU V13 ===
+- Chaque piste Live reste exportée dans un stem séparé.
+- Les Drum Racks sont détectés directement dans le .als.
+- Chaque chaîne active du Drum Rack (kick, snare, cymbale, hi-hat, clap, tom, etc.) est rendue séparément.
+- AutoMix crée des copies .als jetables pour isoler une chaîne à la fois ; le projet original n'est jamais modifié ni sauvegardé.
+- Les sous-instruments de Drum Rack deviennent des cibles de mix indépendantes : leur volume et leur panoramique sont modifiés directement dans le MixerDevice de la chaîne.
+- Le rendu de contrôle de l'étape 3 refait également les sous-instruments séparément.
