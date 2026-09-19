@@ -339,6 +339,9 @@ class App(tk.Tk):
             self.after(0, lambda: self._set_busy(False))
 
     def _offer_manual_stem_import(self, error_text: str):
+        # L'étape automatique vient d'échouer : réactive l'interface avant
+        # d'ouvrir le sélecteur de dossier manuel.
+        self._set_busy(False)
         self.status.configure(text="Export automatique interrompu — importe le dossier de stems après ton export manuel.")
         if messagebox.askyesno(
             "Export automatique impossible",
