@@ -11,7 +11,13 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from automix.als import parse_als, apply_mix_copy, make_render_source_copy
+from automix.als import (
+    parse_als,
+    apply_mix_copy,
+    make_render_source_copy,
+    drum_render_targets,
+    make_drum_branch_render_copy,
+)
 from automix.audio import scan_folder
 from automix.mix_engine import propose_local_mix, build_ai_payload
 from automix.codex_adapter import ask_codex, codex_available
@@ -24,13 +30,13 @@ ROOT = Path(__file__).resolve().parent
 DEFAULT_ALS = ROOT / "sample_project" / "24-chorus chateau.als"
 WORKSPACES = ROOT / "AutoMix_Projects"
 WORKSPACES.mkdir(exist_ok=True)
-APP_VERSION = 12
+APP_VERSION = 13
 
 
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Ableton AutoMix V12 — export automatique + import manuel + mix")
+        self.title("Ableton AutoMix V13 — stems séparés + Drum Rack + mix")
         self.geometry("1180x760")
         self.minsize(980, 650)
 
@@ -79,9 +85,9 @@ class App(tk.Tk):
             self,
             padding=(10, 0, 10, 10),
             text=(
-                "Principe : AutoMix tente une fois de piloter l’export des stems dans Ableton, puis analyse les WAV et crée une copie mixée. "
-                "Il n’y a plus de mode veille. Si l’export automatique échoue, exporte les stems toi-même puis utilise "
-                "« Importer des stems déjà exportés » pour reprendre directement l’analyse."
+                "Principe : chaque piste doit devenir un stem séparé. Pour un Drum Rack, AutoMix traite aussi chaque sous-instrument "
+                "(kick, snare, cymbale, etc.) comme une piste indépendante et le rend séparément. "
+                "Le projet original n’est jamais sauvegardé ni modifié."
             ),
             wraplength=1120,
         )
@@ -195,7 +201,7 @@ class App(tk.Tk):
 
         self.log = tk.Text(self, height=9, wrap="word")
         self.log.pack(fill="x", padx=10, pady=(0, 10))
-        self._log("V12 prête. L’export automatique ne passe plus en veille. S’il échoue, exporte tes stems toi-même puis clique sur « Importer des stems déjà exportés ». L’original .als ne sera jamais modifié.")
+        self._log("V13 prête. Chaque piste est rendue séparément ; les chaînes de Drum Rack (kick, snare, cymbale, etc.) sont également rendues une par une. L’original .als ne sera jamais modifié.")
 
     def _log(self, msg: str):
         def write():
@@ -243,7 +249,9 @@ class App(tk.Tk):
         self.project_label.configure(text=str(self.source_path))
         self._refresh_tracks(project)
         self._clear_audio_actions()
-        self._log(f"Projet chargé : {self.source_path.name} — {len(project.tracks)} piste(s).")
+        self._log(f"Projet chargé : {self.source_path.name} — {project.physical_tracks} piste(s) Live.")
+        if project.drum_branches:
+            self._log(f"Drum Rack détecté : {project.drum_branches} sous-instrument(s) seront rendus séparément.")
         self._save_json("project_source.json", project.to_dict())
         self.status.configure(text="Étape suivante : 1. Créer les stems")
 
@@ -307,6 +315,49 @@ class App(tk.Tk):
         except Exception:
             pass
 
+    @staticmethod
+    def _safe_stem_name(text: str) -> str:
+        cleaned = "".join(c if c.isalnum() or c in "-_ " else "_" for c in text).strip()
+        cleaned = "_".join(cleaned.split())
+        return cleaned[:120] or "DRUM_PART"
+
+    def _render_project_parts(self, render_set: Path, stems: Path, project_info, pass_tag: str):
+        """Render top-level tracks, then every Drum Rack chain separately."""
+        export_individual_tracks(
+            render_set,
+            stems,
+            expected_min_files=max(1, int(getattr(project_info, "physical_tracks", 0) or 1)),
+            log=self._log,
+        )
+
+        targets = drum_render_targets(project_info)
+        if not targets:
+            return
+
+        self._log(
+            f"{len(targets)} sous-instrument(s) de Drum Rack détecté(s) : "
+            "je les rends maintenant séparément."
+        )
+        drum_root = stems / "_drum_parts"
+        drum_root.mkdir(parents=True, exist_ok=True)
+
+        for i, target in enumerate(targets, 1):
+            safe = self._safe_stem_name(target.name)
+            self._log(f"Drum Rack {i}/{len(targets)} : {target.name}")
+            isolated_set = self.workspace / f"{pass_tag}_drum_{i:03d}_{safe}.als"
+            make_drum_branch_render_copy(render_set, isolated_set, target)
+
+            target_dir = drum_root / f"{i:03d}_{safe}"
+            export_individual_tracks(
+                isolated_set,
+                target_dir,
+                expected_min_files=1,
+                log=self._log,
+                rendered_track_name=target.parent_track_name,
+                rendered_track_index=target.physical_track_index,
+                base_name=safe,
+            )
+
     def step1(self):
         if self.busy or not self.source_path or not self.workspace: return
         self._set_busy(True, "Étape 1 en cours : Ableton crée les stems…")
@@ -319,11 +370,7 @@ class App(tk.Tk):
             self._log(f"Copie de rendu préparée avec une sélection 0 → {end_beats:.1f} temps.")
             stems = self.workspace / "pass_00_stems"
             self._log(f"Dossier d’enregistrement automatique : {stems}")
-            result = export_individual_tracks(
-                render_set, stems,
-                expected_min_files=max(1, len(self.project.tracks) if self.project else 1),
-                log=self._log,
-            )
+            self._render_project_parts(render_set, stems, self.project, "pass_00")
             metrics = scan_folder(stems)
             self.previous_metrics = []
             self.pass_index = 0
@@ -369,6 +416,11 @@ class App(tk.Tk):
     def _import_stems_worker(self, folder: Path):
         try:
             self._log(f"Import manuel des stems : {folder}")
+            if self.project and self.project.drum_branches:
+                self._log(
+                    f"Attention : ce projet contient {self.project.drum_branches} sous-instrument(s) de Drum Rack. "
+                    "Le dossier importé doit contenir un fichier séparé pour chacun."
+                )
             metrics = scan_folder(folder)
             if not metrics:
                 raise RuntimeError(
@@ -445,10 +497,11 @@ class App(tk.Tk):
             render_set = self.workspace / f"render_source_pass_{current_pass:02d}.als"
             render_set, _ = make_render_source_copy(self.current_mix_path, render_set, tail_beats=4.0)
             stems = self.workspace / f"pass_{current_pass:02d}_stems"
-            export_individual_tracks(
-                render_set, stems,
-                expected_min_files=max(1, len(self.project.tracks) if self.project else 1),
-                log=self._log,
+            self._render_project_parts(
+                render_set,
+                stems,
+                self.project,
+                f"pass_{current_pass:02d}",
             )
             new_metrics = scan_folder(stems)
             old_q = evaluate_balance(self.project, self.metrics) if self.metrics else None
@@ -676,8 +729,8 @@ class App(tk.Tk):
         try:
             info = check_for_update(ROOT, APP_VERSION)
             if info is None:
-                self._log("AutoMix V12 est déjà à jour.")
-                self.after(0, lambda: messagebox.showinfo("Mises à jour", "AutoMix V12 est déjà à jour."))
+                self._log("AutoMix V13 est déjà à jour.")
+                self.after(0, lambda: messagebox.showinfo("Mises à jour", "AutoMix V13 est déjà à jour."))
                 return
             note = f"\n\n{info.notes}" if info.notes else ""
             def ask():
