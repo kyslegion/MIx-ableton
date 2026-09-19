@@ -361,6 +361,65 @@ def _select_all_individual_tracks(dialog) -> bool:
 
 
 
+def _select_specific_rendered_track(dialog, track_name: str, track_index: int | None) -> bool:
+    """Select one physical Live track in the Rendered Track chooser."""
+    _, keyboard = _imports()
+    combos = _sorted_controls(dialog, "ComboBox")
+    if not combos:
+        return False
+    combo = combos[0]
+
+    wanted = (track_name or "").strip().lower()
+    items = _combo_items(combo)
+    if items and wanted:
+        for item in items:
+            if item.strip().lower() == wanted:
+                try:
+                    combo.select(item)
+                    time.sleep(0.2)
+                    return True
+                except Exception:
+                    pass
+        for item in items:
+            low = item.strip().lower()
+            if wanted in low or low in wanted:
+                try:
+                    combo.select(item)
+                    time.sleep(0.2)
+                    return True
+                except Exception:
+                    pass
+
+    if track_index is not None:
+        # Live 12: Main, All Individual Tracks, Selected Tracks Only, then tracks.
+        option_index = 3 + int(track_index)
+        try:
+            combo.select(option_index)
+            time.sleep(0.2)
+            return True
+        except Exception:
+            pass
+        try:
+            combo.set_focus()
+        except Exception:
+            try:
+                combo.click_input()
+            except Exception:
+                return False
+        try:
+            keyboard.send_keys("{HOME}", pause=0.05)
+            for _ in range(option_index):
+                keyboard.send_keys("{DOWN}", pause=0.025)
+            keyboard.send_keys("{ENTER}", pause=0.05)
+            time.sleep(0.25)
+            return True
+        except Exception:
+            pass
+
+    return False
+
+
+
 def _dialog_click_rel(dialog, rel_x: float, rel_y: float) -> bool:
     """Click inside a modal using normalized coordinates.
 
@@ -822,6 +881,9 @@ def export_individual_tracks(
     log: Callable[[str], None] | None = None,
     launch_timeout: float = 180.0,
     render_timeout: float = 1800.0,
+    rendered_track_name: str | None = None,
+    rendered_track_index: int | None = None,
+    base_name: str = "AUTOMIX_STEMS",
 ) -> ExportResult:
     """Drive Ableton Live's own Export Audio/Video dialog on Windows.
 
@@ -878,13 +940,19 @@ def export_individual_tracks(
         (output_folder / "ableton_export_dialog.txt").write_text(diagnostic, encoding="utf-8")
     except Exception:
         pass
-    _emit(log, "Fenêtre d'export détectée. Je choisis toutes les pistes individuelles…")
-
-    if not _select_all_individual_tracks(dialog):
-        raise AbletonAutomationError(
-            "J'ai ouvert l'export Ableton, mais je n'ai pas reconnu l'option 'Toutes les pistes individuelles'.\n\n"
-            "Même les méthodes de secours de la V4 n'ont pas réussi à piloter le menu Rendered Track. Un diagnostic a été enregistré."
-        )
+    if rendered_track_name is None:
+        _emit(log, "Fenêtre d'export détectée. Je choisis toutes les pistes individuelles…")
+        if not _select_all_individual_tracks(dialog):
+            raise AbletonAutomationError(
+                "J'ai ouvert l'export Ableton, mais je n'ai pas reconnu l'option 'Toutes les pistes individuelles'.\n\n"
+                "Même les méthodes de secours n'ont pas réussi à piloter le menu Rendered Track. Un diagnostic a été enregistré."
+            )
+    else:
+        _emit(log, f"Fenêtre d'export détectée. Je rends uniquement : {rendered_track_name}")
+        if not _select_specific_rendered_track(dialog, rendered_track_name, rendered_track_index):
+            raise AbletonAutomationError(
+                f"Je n'arrive pas à sélectionner la piste « {rendered_track_name} » dans le menu Rendered Track."
+            )
 
     # A mix-analysis render should be WAV/PCM, stereo, non-normalized, with
     # MP3/video disabled.  First try semantic UI controls, then Live 12's
@@ -927,7 +995,7 @@ def export_individual_tracks(
         )
 
     _emit(log, "Fenêtre Enregistrer détectée : je reprends automatiquement la main.")
-    _set_save_target(save, output_folder, "AUTOMIX_STEMS", log=log)
+    _set_save_target(save, output_folder, base_name, log=log)
     _emit(log, "Rendu lancé par Ableton. J'attends la fin sans te demander d'intervenir…")
 
     files = wait_for_render(
