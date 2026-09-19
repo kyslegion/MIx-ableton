@@ -562,10 +562,8 @@ def _click_export_left_of_cancel(dialog) -> bool:
 def _click_export(dialog, keyboard=None) -> bool:
     """Press Live's Export/Exporter button using several independent routes.
 
-    V7 still relied too heavily on one calibrated point near (50%, 95.8%).
-    V8 first uses semantic UIA, then searches every accessible control type,
-    then infers the button from Annuler/Cancel, and only then falls back to
-    geometry + keyboard.
+    The automatic path is best-effort only. V12 no longer waits for manual
+    intervention when Live's custom export UI cannot be detected.
     """
     # 1) Normal UIA Button.  Do not trust a successful click call unless the
     # export modal actually disappears.
@@ -824,7 +822,6 @@ def export_individual_tracks(
     log: Callable[[str], None] | None = None,
     launch_timeout: float = 180.0,
     render_timeout: float = 1800.0,
-    manual_export_wait: float = 1800.0,
 ) -> ExportResult:
     """Drive Ableton Live's own Export Audio/Video dialog on Windows.
 
@@ -870,51 +867,11 @@ def export_individual_tracks(
         _emit(log, "Fenêtre d'export Ableton déjà ouverte : je la réutilise.")
 
     if dialog is None:
-        # V11: this is no longer a fatal error. Windows/Ableton can refuse the
-        # foreground shortcut even though Live itself is healthy. The user may
-        # open the Export Audio/Video window manually; AutoMix keeps watching
-        # for either that window or the Windows Save dialog and resumes on its
-        # own. This also covers the case where the user opens Export and clicks
-        # Exporter before AutoMix has managed to identify Live's custom modal.
-        _emit(log, "⚠ Je n'ai pas détecté la fenêtre Export Audio/Vidéo après le raccourci.")
-        _emit(log, "Ce n'est plus bloquant : va dans Ableton et ouvre toi-même Export Audio/Vidéo (Ctrl+Maj+R ou menu Fichier).")
-        _emit(log, "Je reste en veille. Dès que la fenêtre d'export — ou directement Enregistrer — apparaît, je reprends automatiquement.")
-        deadline = time.time() + max(1.0, manual_export_wait)
-        save = None
-        last_notice = 0.0
-        while time.time() < deadline and dialog is None and save is None:
-            # Short probes instead of one giant blocking wait make the watcher
-            # responsive and allow both possible windows to be detected.
-            dialog = _find_export_dialog(pid, timeout=0.6)
-            if dialog is None:
-                save = _find_save_dialog(pid, timeout=0.6)
-            if dialog is None and save is None:
-                if time.time() - last_notice > 20:
-                    _emit(log, "Veille active : j'attends ton action dans Ableton…")
-                    last_notice = time.time()
-                time.sleep(0.35)
-
-        if save is not None:
-            _emit(log, "Fenêtre Enregistrer détectée directement : je reprends automatiquement la main.")
-            _set_save_target(save, output_folder, "AUTOMIX_STEMS", log=log)
-            _emit(log, "Rendu lancé par Ableton. J'attends la fin sans te demander d'intervenir…")
-            files = wait_for_render(
-                output_folder,
-                min_files=max(1, expected_min_files),
-                timeout=render_timeout,
-                log=log,
-            )
-            elapsed = time.time() - started
-            _emit(log, f"Rendu terminé : {len(files)} fichier(s) en {elapsed:.0f} s.")
-            return ExportResult(str(output_folder), [str(p) for p in files], elapsed, None)
-
-        if dialog is None:
-            raise AbletonAutomationError(
-                "Je n'ai détecté ni la fenêtre Export Audio/Vidéo ni la fenêtre Enregistrer pendant la veille. "
-                "Relance l'étape puis ouvre manuellement Export Audio/Vidéo dans Ableton."
-            )
-
-        _emit(log, "Fenêtre d'export détectée après ton intervention : je reprends automatiquement.")
+        raise AbletonAutomationError(
+            "AutoMix n'arrive pas à détecter la fenêtre Export Audio/Vidéo sur cette installation de Live. "
+            "Le mode veille a été supprimé en V12. Exporte les stems toi-même, puis utilise "
+            "« Importer des stems déjà exportés » dans AutoMix."
+        )
 
     diagnostic = _dump_dialog(dialog)
     try:
@@ -958,27 +915,14 @@ def export_individual_tracks(
         save = _find_save_dialog(pid, timeout=4.0)
 
     if save is None:
-        # V9 safety net: do not abort merely because Live's custom Exporter
-        # control could not be activated programmatically. The user can press
-        # Exporter themselves; AutoMix watches for the Windows Save dialog and
-        # resumes the workflow as soon as it appears.
-        try:
-            dialog.capture_as_image().save(output_folder / "ableton_export_waiting_manual.png")
-        except Exception:
-            pass
-        _emit(log, "⚠ AutoMix n'a pas réussi à déclencher Exporter tout seul.")
-        _emit(log, "Tu peux cliquer toi-même sur « Exporter » dans Ableton : je reste en veille et je reprendrai automatiquement dès que la fenêtre Enregistrer apparaîtra.")
-        _emit(log, f"Veille active pendant {manual_export_wait/60:.0f} min maximum…")
-        save = _find_save_dialog(pid, timeout=max(1.0, manual_export_wait))
-
-    if save is None:
         try:
             dialog.capture_as_image().save(output_folder / "ableton_export_failed.png")
         except Exception:
             pass
         raise AbletonAutomationError(
-            "La fenêtre Enregistrer n'est pas apparue pendant la période de veille. "
-            "Relance l'étape et clique sur Exporter manuellement si nécessaire. "
+            "AutoMix n'arrive pas à ouvrir ou détecter la fenêtre Enregistrer après Exporter. "
+            "Le mode veille a été supprimé en V12. Termine l'export toi-même dans Ableton, puis utilise "
+            "« Importer des stems déjà exportés » dans AutoMix. "
             "Une capture ableton_export_failed.png a été enregistrée dans le dossier des stems."
         )
 
