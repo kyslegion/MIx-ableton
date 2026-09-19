@@ -1,6 +1,6 @@
 {
-  "version": 13,
-  "notes": "V13 : chaque piste reste un stem séparé. Les Drum Racks sont détectés dans le .als et chaque chaîne active (kick, snare, cymbale, etc.) est rendue et mixée comme une cible indépendante. Le projet original n’est jamais modifié. Correctif : la mise à jour est maintenant téléchargée en un seul ZIP pour éviter les coupures WinError 10054.",
+  "version": 14,
+  "notes": "V14 : correction basée sur la vidéo utilisateur. Le menu « Piste convertie » et le bouton « Exporter » sont maintenant pilotés avec de vrais clics souris aux coordonnées relatives de la fenêtre Live, au lieu de faire confiance aux faux succès de Windows UI Automation. Les stems séparés et Drum Rack de V13 sont conservés.",
   "url": "https://codeload.github.com/kyslegion/MIx-ableton/zip/refs/heads/main",
   "sha256": "",
   "files": []
