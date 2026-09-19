@@ -68,7 +68,7 @@ def _looks_like_live_window(w) -> bool:
         return False
 
 
-def find_live_window(project_stem: str | None = None):
+def find_live_window(project_stem: str | None = None, *, strict: bool = False):
     wins = [w for w in _all_top_windows() if _looks_like_live_window(w)]
     if not wins:
         return None
@@ -77,6 +77,8 @@ def find_live_window(project_stem: str | None = None):
         preferred = [w for w in wins if needle in _window_text(w).lower()]
         if preferred:
             return preferred[0]
+        if strict:
+            return None
     # Prefer a normal, visible, sizeable main window.
     for w in wins:
         try:
@@ -91,7 +93,7 @@ def _wait_for_live(project_stem: str, timeout: float, log=None):
     end = time.time() + timeout
     last_notice = 0.0
     while time.time() < end:
-        w = find_live_window(project_stem)
+        w = find_live_window(project_stem, strict=True)
         if w is not None:
             return w
         if time.time() - last_notice > 8:
@@ -109,7 +111,7 @@ def launch_or_focus_project(project_path: str | Path, *, timeout: float = 180.0,
     if not project_path.exists():
         raise AbletonAutomationError(f"Projet introuvable : {project_path}")
 
-    w = find_live_window(project_path.stem)
+    w = find_live_window(project_path.stem, strict=True)
     if w is None:
         _emit(log, f"Ouverture de {project_path.name} dans Ableton Live…")
         try:
@@ -931,7 +933,7 @@ def export_individual_tracks(
     if dialog is None:
         raise AbletonAutomationError(
             "AutoMix n'arrive pas à détecter la fenêtre Export Audio/Vidéo sur cette installation de Live. "
-            "Le mode veille a été supprimé en V12. Exporte les stems toi-même, puis utilise "
+            "Le mode veille a été supprimé en V13. Exporte les stems toi-même, puis utilise "
             "« Importer des stems déjà exportés » dans AutoMix."
         )
 
@@ -989,7 +991,7 @@ def export_individual_tracks(
             pass
         raise AbletonAutomationError(
             "AutoMix n'arrive pas à ouvrir ou détecter la fenêtre Enregistrer après Exporter. "
-            "Le mode veille a été supprimé en V12. Termine l'export toi-même dans Ableton, puis utilise "
+            "Le mode veille a été supprimé en V13. Termine l'export toi-même dans Ableton, puis utilise "
             "« Importer des stems déjà exportés » dans AutoMix. "
             "Une capture ableton_export_failed.png a été enregistrée dans le dossier des stems."
         )
