@@ -1,0 +1,250 @@
+rdinates so Windows
+    scaling / window placement do not matter.  The click lands in the first
+    dropdown (Rendered Track), then HOME/DOWN/ENTER chooses item #2.
+    """
+    try:
+        r = dialog.rectangle()
+        # From Live 12's export dialog: the first combo sits around 41% of the
+        # width and 9% of the height from the top-left of the modal.
+        x = int(r.width() * 0.73)
+        y = int(r.height() * 0.118)
+        dialog.click_input(coords=(x, y))
+        time.sleep(0.2)
+        keyboard.send_keys('{HOME}{DOWN}{ENTER}', pause=0.08)
+        time.sleep(0.3)
+        return True
+    except Exception:
+        return False
+
+
+def _select_all_individual_tracks(dialog) -> bool:
+    """Choose Live's `All Individual Tracks` render mode.
+
+    We deliberately use several strategies.  Text matching remains first for
+    normal Windows controls.  Live 12 can expose the popup as a custom graphic
+    control, so V4 falls back to selecting the second entry of the topmost
+    ComboBox, then finally to a geometry + keyboard route.
+    """
+    _, keyboard = _imports()
+    targets = [
+        'all individual tracks',
+        'toutes les pistes individuelles',
+        'toutes pistes individuelles',
+        'all tracks',
+        'toutes les pistes',
+    ]
+
+    combos = _sorted_controls(dialog, 'ComboBox')
+
+    # 1) Normal UIA/text route when Live exposes popup entries.
+    for combo in combos:
+        items = _combo_items(combo)
+        for item in items:
+            low = item.lower().strip()
+            if any(t == low or t in low for t in targets):
+                try:
+                    combo.select(item)
+                    return True
+                except Exception:
+                    try:
+                        combo.expand()
+                        for li in combo.descendants(control_type='ListItem'):
+                            if li.window_text() == item:
+                                li.click_input()
+                                return True
+                    except Exception:
+                        pass
+
+    # 2) Live 12 workaround: Rendered Track is the topmost ComboBox.
+    # Master/Main is first, All Individual Tracks is second.
+    if combos:
+        first_combo = combos[0]
+        try:
+            # Some backends support integer selection even when item labels
+            # aren't available.
+            first_combo.select(1)
+            time.sleep(0.25)
+            return True
+        except Exception:
+            pass
+        if _select_combo_second_item_with_keyboard(first_combo, keyboard):
+            return True
+
+    # 3) Ultimate fallback for Ableton's fully custom-drawn control.
+    return _select_rendered_track_by_geometry(dialog, keyboard)
+
+
+
+def _dialog_click_rel(dialog, rel_x: float, rel_y: float) -> bool:
+    """Click inside a modal using normalized coordinates.
+
+    Ableton Live 12 draws a number of Export controls itself instead of exposing
+    them as normal Windows widgets.  Normalized coordinates are considerably
+    more robust than absolute screen coordinates across DPI/scaling and window
+    position.
+    """
+    try:
+        r = dialog.rectangle()
+        x = int(r.width() * rel_x)
+        y = int(r.height() * rel_y)
+        dialog.click_input(coords=(x, y))
+        return True
+    except Exception:
+        return False
+
+
+def _custom_toggle_state(dialog, rel_x: float, rel_y: float) -> bool | None:
+    """Infer Live's custom On/Off button state from its fill colour.
+
+    Live colours enabled toggles (cyan/yellow in the default theme) while Off
+    toggles are grey.  This avoids OCR and works even when UI Automation exposes
+    no semantic state for the control.  Returns None when a screenshot cannot be
+    captured reliably.
+    """
+    try:
+        import colorsys
+        img = dialog.capture_as_image().convert('RGB')
+        x = int(img.width * rel_x)
+        y = int(img.height * rel_y)
+        x0, x1 = max(0, x-22), min(img.width, x+22)
+        y0, y1 = max(0, y-7), min(img.height, y+7)
+        sats = []
+        for yy in range(y0, y1, 2):
+            for xx in range(x0, x1, 2):
+                rr, gg, bb = img.getpixel((xx, yy))
+                # Ignore near-black text/borders and near-white highlights.
+                vmax, vmin = max(rr,gg,bb), min(rr,gg,bb)
+                if vmax < 45 or vmin > 235:
+                    continue
+                _h, sat, _v = colorsys.rgb_to_hsv(rr/255.0, gg/255.0, bb/255.0)
+                sats.append(sat)
+        if not sats:
+            return None
+        sats.sort()
+        # A coloured Live toggle has a large high-saturation area; grey Off does not.
+        probe = sats[int(len(sats) * 0.75)]
+        return probe >= 0.22
+    except Exception:
+        return None
+
+
+def _ensure_custom_toggle(dialog, *, rel_y: float, desired: bool, log=None, name: str = '') -> bool:
+    rel_x = 0.84
+    state = _custom_toggle_state(dialog, rel_x, rel_y)
+    if state is None:
+        _emit(log, f"État du réglage {name or rel_y} non lisible visuellement ; je le laisse tel quel.")
+        return False
+    if state != desired:
+        if not _dialog_click_rel(dialog, rel_x, rel_y):
+            return False
+        time.sleep(0.18)
+        state2 = _custom_toggle_state(dialog, rel_x, rel_y)
+        if state2 is not None and state2 != desired:
+            return False
+    _emit(log, f"{name}: {'On' if desired else 'Off'}")
+    return True
+
+
+def _configure_live12_export_by_geometry(dialog, log=None) -> None:
+    """Set the Live 12 export toggles needed for analysis stems.
+
+    These y positions are normalized from Live 12's Export Audio/Video modal and
+    remain stable when the dialog is moved or Windows scaling changes.  Semantic
+    UIA controls are still preferred elsewhere; this only handles Live's custom
+    painted On/Off widgets.
+    """
+    # Return/master off; loop off; mono off; normalize off; analysis off.
+    for name, y, desired in [
+        ('Retours + effets Master', 0.274, False),
+        ('Convertir en boucle', 0.309, False),
+        ('Convertir en mono', 0.345, False),
+        ('Normaliser', 0.381, False),
+        ("Créer fichier d'analyse", 0.418, False),
+        ('Encoder en PCM', 0.607, True),
+        ('Encoder en MP3', 0.756, False),
+        ('Créer vidéo', 0.836, False),
+    ]:
+        _ensure_custom_toggle(dialog, rel_y=y, desired=desired, log=log, name=name)
+
+
+def _control_name(control) -> str:
+    """Best-effort accessible name for a Live control.
+
+    Live 12 sometimes exposes custom-drawn controls as Text/Custom rather than
+    Button.  Looking only at ``control_type=Button`` therefore misses the
+    visible Exporter label on some builds/themes.
+    """
+    parts = []
+    try:
+        t = control.window_text()
+        if t:
+            parts.append(str(t))
+    except Exception:
+        pass
+    try:
+        name = getattr(control.element_info, 'name', '')
+        if name and str(name) not in parts:
+            parts.append(str(name))
+    except Exception:
+        pass
+    return ' '.join(parts).strip()
+
+
+def _click_named_export_control(dialog) -> bool:
+    """Click any accessible control whose name is exactly Export/Exporter.
+
+    This deliberately searches *all* control types, not only UIA Buttons.
+    """
+    try:
+        controls = dialog.descendants()
+    except Exception:
+        controls = []
+    candidates = []
+    for c in controls:
+        name = _control_name(c).strip().lower().replace('&', '')
+        name = name.rstrip('.… ').strip()
+        if not re.fullmatch(r'export(?:er)?', name, re.I):
+            continue
+        try:
+            if not c.is_visible() or not c.is_enabled():
+                continue
+        except Exception:
+            pass
+        try:
+            r = c.rectangle()
+            candidates.append((r.top, r.left, c))
+        except Exception:
+            candidates.append((0, 0, c))
+
+    # The real action button is normally the bottom-most matching control.
+    for _top, _left, c in sorted(candidates, key=lambda row: (row[0], row[1]), reverse=True):
+        for method in ('invoke', 'click_input'):
+            try:
+                fn = getattr(c, method)
+                fn()
+                time.sleep(0.35)
+                try:
+                    if not dialog.is_visible():
+                        return True
+                except Exception:
+                    return True
+            except Exception:
+                continue
+    return False
+
+
+def _click_export_left_of_cancel(dialog) -> bool:
+    """Infer Exporter's position from the accessible Annuler/Cancel button.
+
+    In Live's export dialog Exporter sits immediately to the left of Cancel.
+    This is more robust than a fixed x-coordinate when Windows scaling or Live
+    changes the width of the dialog.
+    """
+    try:
+        controls = dialog.descendants()
+        dr = dialog.rectangle()
+    except Exception:
+        return False
+    for c in controls:
+        name = _control_name(c).strip().lower().replace('&', '')
+        name = name.rstrip('
