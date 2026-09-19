@@ -138,3 +138,10 @@ V7 - EXPORT 100 % AUTOMATIQUE
 - La veille surveille à la fois la fenêtre Export Audio/Vidéo et la fenêtre Windows Enregistrer.
 - Si tu vas jusqu'à cliquer toi-même sur Exporter, AutoMix détecte Enregistrer, impose le dossier des stems et reprend la suite automatiquement.
 - Le délai automatique initial a été raccourci afin d'éviter une impression de blocage quand Windows refuse de donner le focus à Ableton.
+
+
+=== NOUVEAU V12 ===
+- Suppression complète du mode veille après échec de détection d'Export Audio/Vidéo ou de la fenêtre Enregistrer.
+- L'automatisation échoue rapidement au lieu d'attendre 30 minutes.
+- Nouveau bouton « IMPORTER DES STEMS DÉJÀ EXPORTÉS ».
+- Tu peux exporter toi-même les stems dans Ableton, choisir ensuite leur dossier dans AutoMix, puis reprendre directement l'analyse et l'étape 2.
