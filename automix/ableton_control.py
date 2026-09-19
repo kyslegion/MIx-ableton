@@ -306,61 +306,24 @@ def _select_rendered_track_by_geometry(dialog, keyboard) -> bool:
 
 
 def _select_all_individual_tracks(dialog) -> bool:
-    """Choose Live's `All Individual Tracks` render mode.
+    """Choose All Individual Tracks using the same interaction as a human.
 
-    We deliberately use several strategies.  Text matching remains first for
-    normal Windows controls.  Live 12 can expose the popup as a custom graphic
-    control, so V4 falls back to selecting the second entry of the topmost
-    ComboBox, then finally to a geometry + keyboard route.
+    The Live 12 dropdown is custom-drawn and UIA selection can succeed without
+    changing the visible value. V14 therefore clicks the actual dropdown,
+    resets to the first entry with Home, then moves once to the second entry.
     """
     _, keyboard = _imports()
-    targets = [
-        'all individual tracks',
-        'toutes les pistes individuelles',
-        'toutes pistes individuelles',
-        'all tracks',
-        'toutes les pistes',
-    ]
 
-    combos = _sorted_controls(dialog, 'ComboBox')
-
-    # 1) Normal UIA/text route when Live exposes popup entries.
-    for combo in combos:
-        items = _combo_items(combo)
-        for item in items:
-            low = item.lower().strip()
-            if any(t == low or t in low for t in targets):
-                try:
-                    combo.select(item)
-                    return True
-                except Exception:
-                    try:
-                        combo.expand()
-                        for li in combo.descendants(control_type='ListItem'):
-                            if li.window_text() == item:
-                                li.click_input()
-                                return True
-                    except Exception:
-                        pass
-
-    # 2) Live 12 workaround: Rendered Track is the topmost ComboBox.
-    # Master/Main is first, All Individual Tracks is second.
-    if combos:
-        first_combo = combos[0]
-        try:
-            # Some backends support integer selection even when item labels
-            # aren't available.
-            first_combo.select(1)
-            time.sleep(0.25)
-            return True
-        except Exception:
-            pass
-        if _select_combo_second_item_with_keyboard(first_combo, keyboard):
-            return True
-
-    # 3) Ultimate fallback for Ableton's fully custom-drawn control.
-    return _select_rendered_track_by_geometry(dialog, keyboard)
-
+    # Exact geometry measured from the user's Live 12 Export Audio/Video window.
+    if not _dialog_click_rel(dialog, 0.73, 0.118):
+        return False
+    time.sleep(0.25)
+    try:
+        keyboard.send_keys("{HOME}{DOWN}{ENTER}", pause=0.10)
+        time.sleep(0.45)
+        return True
+    except Exception:
+        return False
 
 
 def _select_specific_rendered_track(dialog, track_name: str, track_index: int | None) -> bool:
@@ -397,8 +360,7 @@ def _select_specific_rendered_track(dialog, track_name: str, track_index: int | 
         option_index = 3 + int(track_index)
         try:
             combo.select(option_index)
-            time.sleep(0.2)
-            return True
+            time.sleep(0.25)
         except Exception:
             pass
         try:
@@ -423,18 +385,19 @@ def _select_specific_rendered_track(dialog, track_name: str, track_index: int | 
 
 
 def _dialog_click_rel(dialog, rel_x: float, rel_y: float) -> bool:
-    """Click inside a modal using normalized coordinates.
+    """Perform a real mouse click at a normalized point of Live's modal.
 
-    Ableton Live 12 draws a number of Export controls itself instead of exposing
-    them as normal Windows widgets.  Normalized coordinates are considerably
-    more robust than absolute screen coordinates across DPI/scaling and window
-    position.
+    Live's Export Audio/Video UI is mostly custom-drawn. UI Automation can report
+    success even when Live did not actually react. V14 therefore converts the
+    point to absolute screen coordinates and uses the Windows mouse input path,
+    matching what the user does manually.
     """
     try:
+        from pywinauto import mouse  # type: ignore
         r = dialog.rectangle()
-        x = int(r.width() * rel_x)
-        y = int(r.height() * rel_y)
-        dialog.click_input(coords=(x, y))
+        x = int(r.left + r.width() * rel_x)
+        y = int(r.top + r.height() * rel_y)
+        mouse.click(button="left", coords=(x, y))
         return True
     except Exception:
         return False
@@ -648,11 +611,12 @@ def _click_export(dialog, keyboard=None) -> bool:
     # bottom row so we do not accidentally hit Cancel on layouts where it is
     # the rightmost button.
     for x, y in (
-        (0.50, 0.958),
-        (0.46, 0.958),
+        # User's Live 12 French dialog: Exporter is around 38% of modal width.
+        (0.38, 0.958),
+        (0.40, 0.958),
+        (0.36, 0.958),
         (0.42, 0.958),
-        (0.54, 0.958),
-        (0.50, 0.946),
+        (0.38, 0.946),
     ):
         if _dialog_click_rel(dialog, x, y):
             time.sleep(0.35)
@@ -664,7 +628,7 @@ def _click_export(dialog, keyboard=None) -> bool:
 
     # 5) Last-resort keyboard activation after focusing the most likely area.
     if keyboard is not None:
-        for x in (0.50, 0.46, 0.42):
+        for x in (0.38, 0.40, 0.36):
             try:
                 _dialog_click_rel(dialog, x, 0.958)
                 keyboard.send_keys('{ENTER}', pause=0.05)
@@ -933,7 +897,7 @@ def export_individual_tracks(
     if dialog is None:
         raise AbletonAutomationError(
             "AutoMix n'arrive pas à détecter la fenêtre Export Audio/Vidéo sur cette installation de Live. "
-            "Le mode veille a été supprimé en V13. Exporte les stems toi-même, puis utilise "
+            "Le mode veille a été supprimé en V14. Exporte les stems toi-même, puis utilise "
             "« Importer des stems déjà exportés » dans AutoMix."
         )
 
@@ -991,7 +955,7 @@ def export_individual_tracks(
             pass
         raise AbletonAutomationError(
             "AutoMix n'arrive pas à ouvrir ou détecter la fenêtre Enregistrer après Exporter. "
-            "Le mode veille a été supprimé en V13. Termine l'export toi-même dans Ableton, puis utilise "
+            "Le mode veille a été supprimé en V14. Termine l'export toi-même dans Ableton, puis utilise "
             "« Importer des stems déjà exportés » dans AutoMix. "
             "Une capture ableton_export_failed.png a été enregistrée dans le dossier des stems."
         )
