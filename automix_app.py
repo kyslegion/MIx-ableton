@@ -24,13 +24,13 @@ ROOT = Path(__file__).resolve().parent
 DEFAULT_ALS = ROOT / "sample_project" / "24-chorus chateau.als"
 WORKSPACES = ROOT / "AutoMix_Projects"
 WORKSPACES.mkdir(exist_ok=True)
-APP_VERSION = 11
+APP_VERSION = 12
 
 
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Ableton AutoMix V11 — export automatique + mix + auto-réparation")
+        self.title("Ableton AutoMix V12 — export automatique + import manuel + mix")
         self.geometry("1180x760")
         self.minsize(980, 650)
 
@@ -79,9 +79,9 @@ class App(tk.Tk):
             self,
             padding=(10, 0, 10, 10),
             text=(
-                "Principe : AutoMix pilote l’export des stems dans Ableton, analyse les WAV, crée une copie mixée, "
-                "puis peut refaire une passe de contrôle. Si le bouton Exporter résiste, tu peux cliquer dessus toi-même : "
-                "la V11 reste en veille et reprend automatiquement dès que la fenêtre Enregistrer apparaît."
+                "Principe : AutoMix tente une fois de piloter l’export des stems dans Ableton, puis analyse les WAV et crée une copie mixée. "
+                "Il n’y a plus de mode veille. Si l’export automatique échoue, exporte les stems toi-même puis utilise "
+                "« Importer des stems déjà exportés » pour reprendre directement l’analyse."
             ),
             wraplength=1120,
         )
@@ -95,6 +95,12 @@ class App(tk.Tk):
         self.btn2.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
         self.btn3 = ttk.Button(flow, text="3. RENDRE + VÉRIFIER + PRÉPARER LA PASSE SUIVANTE", command=self.step3)
         self.btn3.grid(row=0, column=2, padx=5, pady=5, sticky="ew")
+        self.btn_import = ttk.Button(
+            flow,
+            text="IMPORTER DES STEMS DÉJÀ EXPORTÉS",
+            command=self.import_stems_manual,
+        )
+        self.btn_import.grid(row=1, column=0, columnspan=3, padx=5, pady=(4, 5), sticky="ew")
         flow.columnconfigure((0, 1, 2), weight=1)
 
         self.status = ttk.Label(self, text="Prêt", padding=(10, 0, 10, 8))
@@ -189,7 +195,7 @@ class App(tk.Tk):
 
         self.log = tk.Text(self, height=9, wrap="word")
         self.log.pack(fill="x", padx=10, pady=(0, 10))
-        self._log("V11 prête. Tout est enregistré automatiquement dans AutoMix_Projects\\<nom du projet>\\session_... : stems, rendus, rapports et copies .als. L’original .als ne sera jamais modifié.")
+        self._log("V12 prête. L’export automatique ne passe plus en veille. S’il échoue, exporte tes stems toi-même puis clique sur « Importer des stems déjà exportés ». L’original .als ne sera jamais modifié.")
 
     def _log(self, msg: str):
         def write():
@@ -203,7 +209,7 @@ class App(tk.Tk):
     def _set_busy(self, yes: bool, text: str | None = None):
         self.busy = yes
         state = "disabled" if yes else "normal"
-        for b in (self.btn1, self.btn2, self.btn3):
+        for b in (self.btn1, self.btn2, self.btn3, self.btn_import):
             b.configure(state=state)
         if text:
             self.status.configure(text=text)
@@ -324,8 +330,60 @@ class App(tk.Tk):
             self.after(0, lambda: self._set_metrics(metrics))
             self.after(0, lambda: self.status.configure(text=f"Étape 1 terminée : {len(metrics)} stem(s). Clique sur 2."))
             self._log("Les stems ont été créés par Ableton et analysés automatiquement.")
+        except AbletonAutomationError as exc:
+            self._log(f"Export automatique indisponible : {exc}")
+            self.after(0, lambda e=str(exc): self._offer_manual_stem_import(e))
         except Exception as exc:
             self._handle_worker_error("Création des stems", exc)
+        finally:
+            self.after(0, lambda: self._set_busy(False))
+
+    def _offer_manual_stem_import(self, error_text: str):
+        self.status.configure(text="Export automatique interrompu — importe le dossier de stems après ton export manuel.")
+        if messagebox.askyesno(
+            "Export automatique impossible",
+            error_text
+            + "\n\nLa veille a été supprimée. Exporte les stems toi-même dans Ableton, puis sélectionne leur dossier."
+            + "\n\nVeux-tu choisir le dossier de stems maintenant ?",
+        ):
+            self.import_stems_manual()
+
+    def import_stems_manual(self):
+        if self.busy or not self.workspace:
+            return
+        folder = filedialog.askdirectory(
+            title="Choisis le dossier contenant les stems exportés depuis Ableton"
+        )
+        if not folder:
+            return
+        self._set_busy(True, "Analyse du dossier de stems exporté manuellement…")
+        threading.Thread(
+            target=self._import_stems_worker,
+            args=(Path(folder).resolve(),),
+            daemon=True,
+        ).start()
+
+    def _import_stems_worker(self, folder: Path):
+        try:
+            self._log(f"Import manuel des stems : {folder}")
+            metrics = scan_folder(folder)
+            if not metrics:
+                raise RuntimeError(
+                    "Je n’ai trouvé aucun WAV/AIFF/FLAC dans ce dossier. Choisis le dossier qui contient réellement les stems."
+                )
+            self.previous_metrics = []
+            self.pass_index = 0
+            self._save_json("manual_stems_source.json", {"folder": str(folder)})
+            self.after(0, lambda m=metrics: self._set_metrics(m))
+            self.after(
+                0,
+                lambda n=len(metrics): self.status.configure(
+                    text=f"Import manuel terminé : {n} stem(s) analysé(s). Clique sur 2."
+                ),
+            )
+            self._log(f"{len(metrics)} stem(s) importé(s) et analysé(s).")
+        except Exception as exc:
+            self._handle_worker_error("Import des stems", exc)
         finally:
             self.after(0, lambda: self._set_busy(False))
 
@@ -615,8 +673,8 @@ class App(tk.Tk):
         try:
             info = check_for_update(ROOT, APP_VERSION)
             if info is None:
-                self._log("AutoMix V11 est déjà à jour.")
-                self.after(0, lambda: messagebox.showinfo("Mises à jour", "AutoMix V11 est déjà à jour."))
+                self._log("AutoMix V12 est déjà à jour.")
+                self.after(0, lambda: messagebox.showinfo("Mises à jour", "AutoMix V12 est déjà à jour."))
                 return
             note = f"\n\n{info.notes}" if info.notes else ""
             def ask():
