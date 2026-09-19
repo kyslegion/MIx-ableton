@@ -1,20 +1,26 @@
-# Ableton AutoMix V11
+# Ableton AutoMix V12
 
 Application Windows en Python pour automatiser une première passe de mix dans Ableton Live.
 
 ## Fonctionnement
 
-1. **Créer les stems + les analyser** : AutoMix ouvre le rendu de Live, demande les pistes individuelles, exporte les WAV dans `AutoMix_Projects` et mesure le niveau / spectre / stéréo.
+1. **Créer les stems + les analyser** : AutoMix tente l’export automatique via Ableton.
 2. **Créer le mix automatique** : première balance prudente gain/pan via Codex CLI si disponible, avec moteur local en secours.
 3. **Rendre + vérifier** : nouvelle passe de rendu et contrôle objectif avant de préparer la passe suivante.
 
 Le fichier `.als` original n'est jamais modifié.
 
-## Correctif V11 pour l'étape 1
+## V12 : plus de mode veille
 
-Si Windows ou Ableton empêche AutoMix d'ouvrir ou d'identifier **Export Audio/Vidéo**, le logiciel passe en veille au lieu d'abandonner.
+Le système de veille ajouté dans les versions précédentes a été supprimé.
 
-Tu peux alors ouvrir toi-même la fenêtre d'export, et même cliquer toi-même sur **Exporter**. Dès que la fenêtre Windows **Enregistrer** apparaît, AutoMix la détecte, impose le dossier des stems et continue automatiquement.
+Si AutoMix n’arrive pas à détecter **Export Audio/Vidéo** ou la fenêtre **Enregistrer**, il s’arrête immédiatement au lieu d’attendre inutilement.
+
+Tu peux alors :
+- exporter les stems toi-même depuis Ableton ;
+- cliquer sur **Importer des stems déjà exportés** ;
+- choisir le dossier contenant les WAV/AIFF/FLAC ;
+- AutoMix les analyse directement et te laisse passer à l’étape 2.
 
 ## Installation
 
@@ -25,8 +31,6 @@ Tu peux alors ouvrir toi-même la fenêtre d'export, et même cliquer toi-même 
 
 ## Mises à jour
 
-La V11 est reliée à ce dépôt avec `update_config.json`.
+Le bouton **Mises à jour** lit `latest.json` sur ce dépôt. Depuis la V11, les nouvelles versions peuvent être récupérées directement depuis GitHub sans télécharger un nouveau ZIP manuellement.
 
-Le bouton **Mises à jour** lit `latest.json`. Les futures versions pourront être publiées directement ici : AutoMix téléchargera les fichiers modifiés, les appliquera puis redémarrera sans demander de nouveau ZIP manuel.
-
-Les données locales comme `AutoMix_Projects/`, `.last_project.txt` et les sauvegardes d'auto-réparation ne doivent pas être versionnées.
+Les données locales comme `AutoMix_Projects/`, `.last_project.txt` et les sauvegardes d'auto-réparation ne sont pas versionnées.
